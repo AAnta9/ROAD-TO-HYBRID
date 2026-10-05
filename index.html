@@ -67,7 +67,7 @@
   <main class="max-w-6xl mx-auto w-full p-4 sm:p-6 flex-1 space-y-6">
 
     <!-- ============================================================== -->
-    <!-- TAB 1: ENTRENAMIENTO (3 FUERZA + 3 CARDIO)                     -->
+    <!-- TAB 1: ENTRENAMIENTO (CON HERENCIA DE PESO SEMANAL)            -->
     <!-- ============================================================== -->
     <section id="tab-workout" class="space-y-6">
       
@@ -238,7 +238,7 @@
                 <td class="p-3">3x4 @ 82.5%</td>
                 <td class="p-3">3x3 @ 82.5%</td>
                 <td class="p-3 font-sans text-emerald-300">2x 40 min Z2</td>
-                <td class="p-3 font-sans text-amber-300">4x4 min (Severo)</td>
+                <td class="p-3 font-sans text-amber-300">4x4 min (Alta intensidad)</td>
               </tr>
               <tr class="hover:bg-slate-800/40 bg-cyan-950/20">
                 <td class="p-3 font-bold text-cyan-300 font-sans">Semana 8 (Tests)</td>
@@ -406,7 +406,7 @@
         </div>
         <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 text-xs text-slate-300 space-y-1">
           <div>✓ Todos los datos se guardan en tiempo real en tu navegador mediante <code>localStorage</code>.</div>
-          <div>✓ Usa <strong>Exportar JSON</strong> para guardar copias semanales o pasar tus registros del móvil al ordenador.</div>
+          <div>✓ Los ejercicios accesorios heredan de forma automática la carga utilizada en la semana anterior.</div>
         </div>
       </div>
     </section>
@@ -533,6 +533,45 @@
         };
       }
       return program;
+    }
+
+    // -------------------------------------------------------------
+    // HERENCIA DINÁMICA DE PESOS SEMANA ANTERIOR
+    // -------------------------------------------------------------
+    function getPreviousWeekWeight(exIdx, setIdx, currentWeek, currentDayKey) {
+      const progress = getStoredProgress();
+      if (currentWeek <= 1) return null;
+      for (let w = currentWeek - 1; w >= 1; w--) {
+        const setKey = `w${w}_d_${currentDayKey}_e${exIdx}_s${setIdx}_weight`;
+        if (progress[setKey] !== undefined && progress[setKey] !== '') {
+          return progress[setKey];
+        }
+        const s0Key = `w${w}_d_${currentDayKey}_e${exIdx}_s0_weight`;
+        if (progress[s0Key] !== undefined && progress[s0Key] !== '') {
+          return progress[s0Key];
+        }
+        for (let s = 0; s < 6; s++) {
+          const anyKey = `w${w}_d_${currentDayKey}_e${exIdx}_s${s}_weight`;
+          if (progress[anyKey] !== undefined && progress[anyKey] !== '') {
+            return progress[anyKey];
+          }
+        }
+      }
+      return null;
+    }
+
+    function getPreviousWeekExerciseSummaryWeight(exIdx, currentWeek, currentDayKey) {
+      const progress = getStoredProgress();
+      if (currentWeek <= 1) return null;
+      for (let w = currentWeek - 1; w >= 1; w--) {
+        for (let s = 0; s < 6; s++) {
+          const anyKey = `w${w}_d_${currentDayKey}_e${exIdx}_s${s}_weight`;
+          if (progress[anyKey] !== undefined && progress[anyKey] !== '') {
+            return progress[anyKey];
+          }
+        }
+      }
+      return null;
     }
 
     // -------------------------------------------------------------
@@ -701,13 +740,36 @@
         const progress = getStoredProgress();
 
         container.innerHTML = session.exercises.map((ex, exIdx) => {
+          // Obtener peso de referencia de la semana anterior para este ejercicio (si no es 1RM)
+          const prevSummaryWeight = (!ex.is1RM && currentWeek > 1) 
+            ? getPreviousWeekExerciseSummaryWeight(exIdx, currentWeek, currentDayKey) 
+            : null;
+
           const setsHtml = Array.from({ length: ex.sets }).map((_, setIdx) => {
             const setKey = `w${currentWeek}_d_${currentDayKey}_e${exIdx}_s${setIdx}`;
             const weightKey = `${setKey}_weight`;
             const repsKey = `${setKey}_reps`;
 
             const isDone = progress[setKey] ? 'checked' : '';
-            const savedWeight = progress[weightKey] !== undefined ? progress[weightKey] : (ex.defaultWeight !== undefined ? ex.defaultWeight : '');
+            
+            // Peso de la serie específica en la semana anterior
+            const prevSetWeight = (!ex.is1RM && currentWeek > 1)
+              ? getPreviousWeekWeight(exIdx, setIdx, currentWeek, currentDayKey)
+              : null;
+
+            // Lógica de Pre-rellenado:
+            // 1. Si ya se guardó para esta semana, usarlo.
+            // 2. Si no, y no es 1RM, y existe registro de la semana previa, HEREDARLO automáticament.
+            // 3. Si no, usar defaultWeight.
+            let savedWeight = '';
+            if (progress[weightKey] !== undefined) {
+              savedWeight = progress[weightKey];
+            } else if (!ex.is1RM && prevSetWeight !== null) {
+              savedWeight = prevSetWeight;
+            } else if (ex.defaultWeight !== undefined) {
+              savedWeight = ex.defaultWeight;
+            }
+
             const savedReps = progress[repsKey] !== undefined ? progress[repsKey] : ex.reps;
 
             return `
@@ -741,9 +803,16 @@
                 </div>
               </div>
 
-              <div class="bg-slate-950/50 p-2.5 rounded-xl border border-slate-800/80 text-xs text-slate-300 flex items-center justify-between">
+              <div class="bg-slate-950/50 p-2.5 rounded-xl border border-slate-800/80 text-xs text-slate-300 flex flex-wrap items-center justify-between gap-2">
                 <div>💡 <em>${ex.notes}</em></div>
-                ${ex.is1RM ? `<span class="text-[10px] font-mono text-slate-400 ml-2 whitespace-nowrap">Plan: <strong class="text-cyan-400">${ex.defaultWeight} kg</strong></span>` : ''}
+                <div class="flex items-center space-x-2">
+                  ${ex.is1RM ? `<span class="text-[10px] font-mono text-slate-400 whitespace-nowrap">Plan: <strong class="text-cyan-400">${ex.defaultWeight} kg</strong></span>` : ''}
+                  ${(!ex.is1RM && prevSummaryWeight !== null) ? `
+                    <span class="text-[10px] font-mono text-emerald-400 bg-emerald-950/70 border border-emerald-800/60 px-2 py-0.5 rounded whitespace-nowrap shadow-sm">
+                      Sem. anterior: <strong>${prevSummaryWeight}${ex.unitType}</strong>
+                    </span>
+                  ` : ''}
+                </div>
               </div>
 
               <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 pt-1">
@@ -802,7 +871,15 @@
 
               if (isChecked || savedWeight !== undefined) {
                 hasLoggedAny = true;
-                const finalWeight = (savedWeight !== undefined && savedWeight !== '') ? parseFloat(savedWeight) : (ex.defaultWeight || 0);
+                let finalWeight = 0;
+                if (savedWeight !== undefined && savedWeight !== '') {
+                  finalWeight = parseFloat(savedWeight);
+                } else if (!ex.is1RM && weekNum > 1) {
+                  const prevW = getPreviousWeekWeight(exIdx, setIdx, weekNum, dayKey);
+                  finalWeight = prevW !== null ? parseFloat(prevW) : (parseFloat(ex.defaultWeight) || 0);
+                } else {
+                  finalWeight = parseFloat(ex.defaultWeight) || 0;
+                }
                 const finalReps = (savedReps !== undefined && savedReps !== '') ? (parseFloat(savedReps) || 0) : (parseFloat(ex.reps) || 0);
                 totalTonnage += (finalWeight * finalReps);
               }
